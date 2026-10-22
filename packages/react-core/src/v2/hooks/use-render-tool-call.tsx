@@ -13,6 +13,7 @@ import { useCopilotChatConfiguration } from "../providers/CopilotChatConfigurati
 import { DEFAULT_AGENT_ID } from "@copilotkit/shared";
 import { partialJSONParse } from "@copilotkit/shared";
 import type { ReactToolCallRenderer } from "../types/react-tool-call-renderer";
+import type { ToolCallRendererNames } from "../components/chat/tool-call-layout";
 
 export interface UseRenderToolCallProps {
   toolCall: ToolCall;
@@ -155,6 +156,40 @@ function warnAboutUnrenderedToolCalls(
 }
 
 /**
+ * The tool-call renderers registered on the provider, kept current.
+ * @internal
+ */
+export function useToolCallRenderers() {
+  const { copilotkit } = useCopilotKit();
+  // useSyncExternalStore so the value is current even if subscriptions run in
+  // any order.
+  return useSyncExternalStore(
+    (callback) =>
+      copilotkit.subscribe({ onRenderToolCallsChanged: callback }).unsubscribe,
+    () => copilotkit.renderToolCalls,
+    () => copilotkit.renderToolCalls,
+  );
+}
+
+/**
+ * Which tool names have a renderer of their own, and whether a wildcard
+ * (`"*"`) renderer is registered.
+ * @internal
+ */
+export function useToolCallRendererNames(): ToolCallRendererNames {
+  const renderers = useToolCallRenderers();
+  return useMemo(
+    () => ({
+      named: new Set(
+        renderers.map((rc) => rc.name).filter((name) => name !== "*"),
+      ),
+      wildcard: renderers.some((rc) => rc.name === "*"),
+    }),
+    [renderers],
+  );
+}
+
+/**
  * Hook that returns a function to render tool calls based on the render functions
  * defined in CopilotKitProvider.
  *
@@ -170,17 +205,7 @@ export function useRenderToolCall() {
   const unrenderedToolNames = useRef<Set<string>>(new Set());
   const warnedToolNames = useRef<Set<string>>(new Set());
 
-  // Subscribe to render tool calls changes using useSyncExternalStore
-  // This ensures we always have the latest value, even if subscriptions run in any order
-  const renderToolCalls = useSyncExternalStore(
-    (callback) => {
-      return copilotkit.subscribe({
-        onRenderToolCallsChanged: callback,
-      }).unsubscribe;
-    },
-    () => copilotkit.renderToolCalls,
-    () => copilotkit.renderToolCalls,
-  );
+  const renderToolCalls = useToolCallRenderers();
 
   // Note: executingToolCallIds is now provided by CopilotKitProvider context.
   // This is critical for HITL reconnection: when connecting to a thread with

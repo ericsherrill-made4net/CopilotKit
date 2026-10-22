@@ -893,6 +893,37 @@
   }
 }
 
+/* "turn" tool-call display: text in a reply's working phase was narration, and
+   fades to muted in place once a call follows it. Higher specificity than the
+   markdown rules above, so it also mutes bold, links and inline code. */
+@layer utilities {
+  [data-copilotkit] [data-work-text] .cpk\:prose,
+  [data-copilotkit] [data-work-text] .cpk\:prose * {
+    transition: color 600ms ease;
+  }
+
+  [data-copilotkit] [data-work-text="narration"] .cpk\:prose,
+  [data-copilotkit] [data-work-text="narration"] .cpk\:prose * {
+    color: var(--muted-foreground);
+  }
+}
+
+/* "stacked" tool-call display: the newest call drops onto the stack, and the
+   stack fans out into its cards when opened. */
+@keyframes cpk-stack-drop {
+  from {
+    transform: translateY(-6px);
+    opacity: 0.2;
+  }
+}
+
+@keyframes cpk-stack-fan {
+  from {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+}
+
 /* Thin, token-colored scrollbars inside CopilotKit surfaces. In the base layer
    so utilities win: the composer textarea hides its scrollbar to stay aligned
    with the markdown preview drawn underneath it. */

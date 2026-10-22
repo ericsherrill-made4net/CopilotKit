@@ -1,7 +1,12 @@
-import React, { useState } from "react";
+import React, { useContext, useState } from "react";
 import { Check, ChevronRight, Circle, Loader2 } from "lucide-react";
 import { ToolCallStatus } from "@copilotkit/core";
 import { useRenderTool } from "./use-render-tool";
+import {
+  ToolCallGroupContext,
+  ToolCallPayloads,
+  ToolCallRow,
+} from "../components/chat/CopilotChatToolCallGroup";
 
 export type DefaultRenderProps = {
   /** The name of the tool being called. */
@@ -156,30 +161,6 @@ export function useDefaultRenderTool(
   );
 }
 
-/**
- * Guarded JSON.stringify used inside the expanded `<pre>` blocks. A circular
- * reference would otherwise crash the entire React tree on render.
- */
-function safeStringifyForPre(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch (err) {
-    console.warn(
-      "[CopilotKit] Failed to JSON.stringify tool-call payload for default renderer; falling back to String():",
-      err,
-    );
-    try {
-      return String(value);
-    } catch (innerErr) {
-      console.warn(
-        "[CopilotKit] safeStringifyForPre: value could not be stringified:",
-        innerErr,
-      );
-      return "[unserializable]";
-    }
-  }
-}
-
 export function DefaultToolCallRenderer({
   name,
   toolCallId,
@@ -187,25 +168,46 @@ export function DefaultToolCallRenderer({
   status,
   result,
 }: DefaultRenderProps): React.ReactElement {
+  const group = useContext(ToolCallGroupContext);
   const [isExpanded, setIsExpanded] = useState(false);
 
   const isActive = status === "inProgress" || status === "executing";
   const isComplete = status === "complete";
 
+  const dataProps = {
+    "data-testid": "copilot-tool-render",
+    "data-tool-name": name,
+    "data-tool-call-id": toolCallId,
+    "data-status": status,
+    "data-args": safeStringifyForAttr(parameters),
+    "data-result": safeStringifyForAttr(result),
+  };
+
+  // Inside a group of calls, a row that fits the group instead of a card.
+  if (group) {
+    return (
+      <ToolCallRow
+        {...dataProps}
+        name={name}
+        parameters={parameters}
+        result={result}
+        status={
+          isActive
+            ? "running"
+            : group.failedIds.has(toolCallId)
+              ? "failed"
+              : "done"
+        }
+        appearance={group.appearance}
+      />
+    );
+  }
+
   const statusLabel = isActive ? "Running" : isComplete ? "Done" : status;
   const StatusIcon = isActive ? Loader2 : isComplete ? Check : Circle;
 
   return (
-    <div
-      data-testid="copilot-tool-render"
-      data-tool-name={name}
-      data-tool-call-id={toolCallId}
-      data-status={status}
-      data-args={safeStringifyForAttr(parameters)}
-      data-result={safeStringifyForAttr(result)}
-      data-copilotkit
-      className="cpk:my-2 cpk:bg-transparent"
-    >
+    <div {...dataProps} data-copilotkit className="cpk:my-2 cpk:bg-transparent">
       <div className="cpk:overflow-hidden cpk:rounded-xl cpk:border cpk:border-border cpk:bg-card cpk:text-card-foreground">
         {/* Header row — always visible. A real <button> with aria-expanded
             so it is keyboard-accessible (Enter/Space toggle natively). */}
@@ -248,31 +250,12 @@ export function DefaultToolCallRenderer({
           />
         </button>
 
-        {/* Expandable details */}
         {isExpanded && (
-          <div className="cpk:grid cpk:gap-3 cpk:border-t cpk:border-border cpk:px-3.5 cpk:py-3">
-            <div>
-              <div className="cpk:text-[11px] cpk:font-medium cpk:uppercase cpk:tracking-wide cpk:text-muted-foreground">
-                Arguments
-              </div>
-              <pre className="cpk:m-0 cpk:mt-1.5 cpk:max-h-[200px] cpk:overflow-auto cpk:rounded-lg cpk:bg-muted cpk:p-2.5 cpk:font-mono cpk:text-xs cpk:leading-relaxed cpk:text-foreground cpk:whitespace-pre-wrap cpk:break-words">
-                {safeStringifyForPre(parameters ?? {})}
-              </pre>
-            </div>
-
-            {result !== undefined && (
-              <div>
-                <div className="cpk:text-[11px] cpk:font-medium cpk:uppercase cpk:tracking-wide cpk:text-muted-foreground">
-                  Result
-                </div>
-                <pre className="cpk:m-0 cpk:mt-1.5 cpk:max-h-[200px] cpk:overflow-auto cpk:rounded-lg cpk:bg-muted cpk:p-2.5 cpk:font-mono cpk:text-xs cpk:leading-relaxed cpk:text-foreground cpk:whitespace-pre-wrap cpk:break-words">
-                  {typeof result === "string"
-                    ? result
-                    : safeStringifyForPre(result)}
-                </pre>
-              </div>
-            )}
-          </div>
+          <ToolCallPayloads
+            parameters={parameters}
+            result={result}
+            className="cpk:border-t cpk:border-border cpk:px-3.5 cpk:py-3"
+          />
         )}
       </div>
     </div>

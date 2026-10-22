@@ -19,6 +19,17 @@ import { getAssistantTurns } from "./assistant-turn";
 import type { AssistantTurn } from "./assistant-turn";
 import CopilotChatUserMessage from "./CopilotChatUserMessage";
 import CopilotChatReasoningMessage from "./CopilotChatReasoningMessage";
+import CopilotChatWorkSummary from "./CopilotChatWorkSummary";
+import { Collapsible } from "./CopilotChatToolCallGroup";
+import { ToolCallDisplayContext } from "./tool-call-display-context";
+import type { ToolCallDisplayContextValue } from "./tool-call-display-context";
+import { getToolCallLayouts, getTurnWork } from "./tool-call-layout";
+import type {
+  CopilotChatToolCallDisplay,
+  ToolCallEntry,
+  TurnWork,
+} from "./tool-call-layout";
+import { useToolCallRendererNames } from "../../hooks/use-render-tool-call";
 import type {
   ActivityMessage,
   AssistantMessage,
@@ -438,6 +449,8 @@ export type CopilotChatMessageViewProps = Omit<
       reasoningMessage: typeof CopilotChatReasoningMessage;
       cursor: typeof CopilotChatMessageView.Cursor;
       intelligenceIndicator: typeof IntelligenceIndicatorView;
+      /** The "Working… / Worked for 9s" line of the `"turn"` tool-call display. */
+      workSummary: typeof CopilotChatWorkSummary;
     },
     {
       isRunning?: boolean;
@@ -463,6 +476,14 @@ export type CopilotChatMessageViewProps = Omit<
        * below the messages.
        */
       inlineCursor?: boolean;
+      /**
+       * How tool calls show. Defaults to `"grouped"`: calls made in a row
+       * share one card that opens to a row per call. `"line"` and `"stacked"`
+       * group them too; `"turn"` folds a reply's whole working phase into
+       * "Worked for 9s" once it's done; `"separate"` gives every call its own
+       * card. Calls with a renderer of their own always show on their own.
+       */
+      toolCallDisplay?: CopilotChatToolCallDisplay;
     } & React.HTMLAttributes<HTMLDivElement>
   >,
   "children"
@@ -487,9 +508,11 @@ export function CopilotChatMessageView({
   reasoningMessage,
   cursor,
   intelligenceIndicator,
+  workSummary,
   isRunning = false,
   transformMessages,
   inlineCursor = true,
+  toolCallDisplay = "grouped",
   children,
   className,
   ...props
@@ -567,6 +590,119 @@ export function CopilotChatMessageView({
   // a transform can drop, replace or reorder the tail. Streaming state and the
   // assistant toolbar key off this.
   const latestRenderedId = renderedMessages[renderedMessages.length - 1]?.id;
+
+  // ---------------------------------------------------------------------------
+  // Tool-call display
+  // ---------------------------------------------------------------------------
+  // Groups of calls can span messages (an agent often sends each call as its
+  // own message), so they're laid out here for the whole list and handed to
+  // each message's tool-call view through context.
+  const rendererNames = useToolCallRendererNames();
+  const toolCallLayouts = useMemo(
+    () =>
+      toolCallDisplay === "separate"
+        ? new Map()
+        : getToolCallLayouts(renderedMessages, messages, rendererNames),
+    [toolCallDisplay, renderedMessages, messages, rendererNames],
+  );
+  const turnWork = useMemo(
+    () =>
+      toolCallDisplay === "turn"
+        ? getTurnWork(renderedMessages, toolCallLayouts)
+        : undefined,
+    [toolCallDisplay, renderedMessages, toolCallLayouts],
+  );
+  const turnByFirstMessage = useMemo(() => {
+    const byFirst = new Map<string, TurnWork>();
+    for (const turn of turnWork?.values() ?? []) {
+      byFirst.set(turn.firstMessageId, turn);
+    }
+    return byFirst;
+  }, [turnWork]);
+
+  // The latest reply is keyed by the user message it answers (see getTurnWork).
+  let latestTurnKey = "start";
+  for (let i = renderedMessages.length - 1; i >= 0; i--) {
+    if (renderedMessages[i]!.role === "user") {
+      latestTurnKey = renderedMessages[i]!.id;
+      break;
+    }
+  }
+  const isWorkingOn = (turnKey: string) =>
+    isRunning && turnKey === latestTurnKey;
+
+  // Work shows while the agent is on it and folds once the reply is done,
+  // unless the user has opened or closed it themselves.
+  const [toggledTurns, setToggledTurns] = useState<
+    ReadonlyMap<string, boolean>
+  >(() => new Map());
+  const isWorkOpen = (turnKey: string) =>
+    toggledTurns.get(turnKey) ?? isWorkingOn(turnKey);
+
+  // How long the agent worked, for "Worked for 9s". Only known for replies
+  // this client watched start from the user's message; a restored thread
+  // shows the tool count instead. Written during render: it only records
+  // timestamps, and repeating a write changes nothing.
+  const workTimesRef = useRef(
+    new Map<string, { startedAt: number; finishedAt?: number }>(),
+  );
+  if (toolCallDisplay === "turn") {
+    const workTimes = workTimesRef.current;
+    if (isRunning) {
+      const times = workTimes.get(latestTurnKey);
+      if (times) times.finishedAt = undefined;
+      else if (renderedMessages[renderedMessages.length - 1]?.role === "user")
+        workTimes.set(latestTurnKey, { startedAt: Date.now() });
+    } else {
+      for (const times of workTimes.values()) times.finishedAt ??= Date.now();
+    }
+  }
+
+  const workOpen = useMemo(() => {
+    const open = new Map<string, boolean>();
+    for (const turn of turnWork?.values() ?? []) {
+      const turnOpen =
+        toggledTurns.get(turn.key) ?? (isRunning && turn.key === latestTurnKey);
+      for (const id of turn.workMessageIds) open.set(id, turnOpen);
+    }
+    return open;
+  }, [turnWork, toggledTurns, isRunning, latestTurnKey]);
+
+  const toolCallDisplayContext = useMemo<ToolCallDisplayContextValue>(
+    () => ({
+      display: toolCallDisplay,
+      isRunning,
+      layouts: toolCallLayouts,
+      workOpen,
+    }),
+    [toolCallDisplay, isRunning, toolCallLayouts, workOpen],
+  );
+
+  const renderWorkSummary = (turnKey: string, calls: ToolCallEntry[]) => {
+    const working = isWorkingOn(turnKey);
+    const open = isWorkOpen(turnKey);
+    const times = workTimesRef.current.get(turnKey);
+    return (
+      <Collapsible
+        key={`work-summary-${turnKey}`}
+        open={working || calls.length > 0}
+      >
+        <div className="cpk:pt-1 cpk:pb-2">
+          {renderSlot(workSummary, CopilotChatWorkSummary, {
+            isWorking: working,
+            isOpen: open,
+            calls,
+            startedAt: times?.startedAt,
+            finishedAt: times?.finishedAt,
+            onClick: () =>
+              setToggledTurns((toggled) =>
+                new Map(toggled).set(turnKey, !open),
+              ),
+          })}
+        </div>
+      </Collapsible>
+    );
+  };
 
   // Row keys are looked up by message id, so two rendered messages sharing an
   // id would share a React key. Deduplication already ran on the input, so a
@@ -905,6 +1041,9 @@ export function CopilotChatMessageView({
     // tool lookups) must keep using message.id.
     const rowKey = rowRenderKeys.get(message.id) ?? message.id;
 
+    const turn = turnByFirstMessage.get(message.id);
+    if (turn) elements.push(renderWorkSummary(turn.key, turn.calls));
+
     if (renderCustomMessage) {
       elements.push(
         <MemoizedCustomMessage
@@ -949,7 +1088,7 @@ export function CopilotChatMessageView({
         />,
       );
     } else if (message.role === "reasoning") {
-      elements.push(
+      const reasoning = (
         <MemoizedReasoningMessage
           key={rowKey}
           message={message as ReasoningMessage}
@@ -958,7 +1097,18 @@ export function CopilotChatMessageView({
           isLatest={message.id === latestRenderedId}
           ReasoningMessageComponent={ReasoningComponent}
           slotProps={reasoningSlotProps}
-        />,
+        />
+      );
+      // Reasoning during a reply's working phase folds away with the work.
+      const open = workOpen.get(message.id);
+      elements.push(
+        open === undefined ? (
+          reasoning
+        ) : (
+          <Collapsible key={rowKey} open={open}>
+            {reasoning}
+          </Collapsible>
+        ),
       );
     }
 
@@ -1005,9 +1155,11 @@ export function CopilotChatMessageView({
   // ---------------------------------------------------------------------------
   if (children) {
     return (
-      <div data-copilotkit style={{ display: "contents" }}>
-        {children({ messageElements, messages, isRunning, interruptElement })}
-      </div>
+      <ToolCallDisplayContext.Provider value={toolCallDisplayContext}>
+        <div data-copilotkit style={{ display: "contents" }}>
+          {children({ messageElements, messages, isRunning, interruptElement })}
+        </div>
+      </ToolCallDisplayContext.Provider>
     );
   }
 
@@ -1015,55 +1167,69 @@ export function CopilotChatMessageView({
   // reasoning message — the reasoning card already shows its own loading
   // indicator. A reasoning message the transform hid shows no indicator.
   // A reply streaming text carries the cursor inline instead.
+  // In the "turn" display the "Working" line at the top of the reply is the
+  // progress indicator; before the reply's first message it sits where the
+  // cursor would.
   const showCursor =
-    isRunning && lastMessage?.role !== "reasoning" && !cursorMessageId;
+    isRunning &&
+    lastMessage?.role !== "reasoning" &&
+    !cursorMessageId &&
+    toolCallDisplay !== "turn";
+  const pendingWorkSummary =
+    toolCallDisplay === "turn" && isRunning && lastMessage?.role === "user";
 
   // ---------------------------------------------------------------------------
   // Render — shared wrapper, conditional inner content (virtual vs flat)
   // ---------------------------------------------------------------------------
   return (
-    <div
-      data-copilotkit
-      data-testid="copilot-message-list"
-      className={twMerge("copilotKitMessages cpk:flex cpk:flex-col", className)}
-      {...props}
-    >
-      {shouldVirtualize ? (
-        // Virtual path: only visible items are in the DOM; outer div maintains
-        // total scroll height so the scrollbar reflects the full list size.
-        <div
-          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
-        >
-          {virtualizer.getVirtualItems().map((virtualItem) => {
-            const message = renderedMessages[virtualItem.index]!;
-            return (
-              <div
-                key={rowRenderKeys.get(message.id) ?? message.id}
-                data-index={virtualItem.index}
-                ref={virtualizer.measureElement}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${virtualItem.start}px)`,
-                }}
-              >
-                {renderMessageBlock(message)}
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        messageElements
-      )}
-      {interruptElement}
-      {showCursor && (
-        <div className="cpk:mt-2">
-          {renderSlot(cursor, CopilotChatMessageView.Cursor, {})}
-        </div>
-      )}
-    </div>
+    <ToolCallDisplayContext.Provider value={toolCallDisplayContext}>
+      <div
+        data-copilotkit
+        data-testid="copilot-message-list"
+        className={twMerge(
+          "copilotKitMessages cpk:flex cpk:flex-col",
+          className,
+        )}
+        {...props}
+      >
+        {shouldVirtualize ? (
+          // Virtual path: only visible items are in the DOM; outer div maintains
+          // total scroll height so the scrollbar reflects the full list size.
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          >
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const message = renderedMessages[virtualItem.index]!;
+              return (
+                <div
+                  key={rowRenderKeys.get(message.id) ?? message.id}
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                >
+                  {renderMessageBlock(message)}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          messageElements
+        )}
+        {interruptElement}
+        {pendingWorkSummary && renderWorkSummary(latestTurnKey, [])}
+        {showCursor && (
+          <div className="cpk:mt-2">
+            {renderSlot(cursor, CopilotChatMessageView.Cursor, {})}
+          </div>
+        )}
+      </div>
+    </ToolCallDisplayContext.Provider>
   );
 }
 
