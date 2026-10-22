@@ -154,6 +154,9 @@ export const CopilotKitProvider: React.FC<CopilotKitNativeProviderProps> = ({
     if (defaultThrottleMs !== undefined) {
       instance.setDefaultThrottleMs(defaultThrottleMs);
     }
+    // Lazy ref init, not useState: the ctor starts the runtime `/info` fetch, and React 19
+    // StrictMode double-invokes useState initializers, which would send a second request.
+    // react-doctor-disable-next-line react-doctor/no-ref-current-in-render
     copilotkitRef.current = instance;
   }
 

@@ -16,7 +16,13 @@
  * END V1 SDK DEPRECATED. USE V2 INSTEAD NOTICE
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Descendant } from "slate";
 import { Editor } from "slate";
 import { Editable, Slate } from "slate-react";
@@ -118,6 +124,10 @@ const BaseCopilotTextareaWithHoveringContext = React.forwardRef(
     const valueOnInitialRender = useMemo(() => props.value ?? "", []);
     const [lastKnownFullEditorText, setLastKnownFullEditorText] =
       useState(valueOnInitialRender);
+    // Mirrors the most recent value passed to setLastKnownFullEditorText, so the
+    // change handler can tell whether the text changed without putting a side
+    // effect inside a state updater. Written only in the handler and the effect.
+    const latestFullEditorTextRef = useRef(valueOnInitialRender);
     const [cursorMovedSinceLastTextChange, setCursorMovedSinceLastTextChange] =
       useState(false);
     const [isUserInputActive, setIsUserInputActive] = useState(false);
@@ -242,6 +252,7 @@ const BaseCopilotTextareaWithHoveringContext = React.forwardRef(
         return;
       }
 
+      latestFullEditorTextRef.current = props.value ?? "";
       setLastKnownFullEditorText(props.value ?? "");
       replaceEditorText(editor, props.value ?? "");
     }, [props.value]);
@@ -285,12 +296,13 @@ const BaseCopilotTextareaWithHoveringContext = React.forwardRef(
             ? newEditorState.textBeforeCursor + newEditorState.textAfterCursor
             : getFullEditorTextWithNewlines(editor); // we don't double-parse the editor. When `newEditorState` is null, we didn't parse the editor yet.
 
-          setLastKnownFullEditorText((prev) => {
-            if (prev !== fullEditorText) {
-              setCursorMovedSinceLastTextChange(false);
-            }
-            return fullEditorText;
-          });
+          const textChanged =
+            latestFullEditorTextRef.current !== fullEditorText;
+          latestFullEditorTextRef.current = fullEditorText;
+          setLastKnownFullEditorText(fullEditorText);
+          if (textChanged) {
+            setCursorMovedSinceLastTextChange(false);
+          }
 
           onChangeHandlerForAutocomplete(newEditorState);
 

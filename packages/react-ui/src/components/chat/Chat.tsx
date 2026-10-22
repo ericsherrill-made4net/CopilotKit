@@ -94,7 +94,13 @@ import { RenderMessage as DefaultRenderMessage } from "./messages/RenderMessage"
 import { AssistantMessage as DefaultAssistantMessage } from "./messages/AssistantMessage";
 import { UserMessage as DefaultUserMessage } from "./messages/UserMessage";
 import { ImageRenderer as DefaultImageRenderer } from "./messages/ImageRenderer";
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useInsertionEffect,
+  useRef,
+  useState,
+  useCallback,
+} from "react";
 import type { SystemMessageFunction } from "@copilotkit/react-core";
 import {
   useCopilotContext,
@@ -891,7 +897,11 @@ export function CopilotChat({
       }
     }
   };
-  processFilesRef.current = processFiles;
+  // Keep the paste listener on the latest processFiles. Written in an insertion
+  // effect (not during render); only read from the paste event handler.
+  useInsertionEffect(() => {
+    processFilesRef.current = processFiles;
+  });
 
   const handleFileUpload = async (
     event: React.ChangeEvent<HTMLInputElement>,

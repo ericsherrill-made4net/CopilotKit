@@ -1,10 +1,11 @@
 import useAutosizeTextArea from "../../../hooks/misc/use-autosize-textarea";
-import {
+import type {
   EditingEditorState,
   Generator_InsertionOrEditingSuggestion,
 } from "../../../types/base/autosuggestions-bare-function";
 import { SourceSearchBox } from "../../source-search-box/source-search-box";
-import { DocumentPointer, useCopilotContext } from "@copilotkit/react-core";
+import type { DocumentPointer } from "@copilotkit/react-core";
+import { useCopilotContext } from "@copilotkit/react-core";
 import { Button } from "../../ui/button";
 import { Label } from "../../ui/label";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -83,16 +84,14 @@ export const HoveringInsertionPromptBoxCore = ({
         if (done) {
           break;
         }
-        setEditSuggestion((prev) => {
-          const newSuggestion = prev + value;
+        setEditSuggestion((prev) => prev + value);
 
-          // Scroll to the bottom of the textarea. We call this here to make sure scroll-to-bottom is synchronous with the state update.
-          if (suggestionTextAreaRef.current) {
-            suggestionTextAreaRef.current.scrollTop =
-              suggestionTextAreaRef.current.scrollHeight;
-          }
-          return newSuggestion;
-        });
+        // Scroll to the bottom of the textarea. We call this right after the state update (not inside the
+        // updater, which must stay pure) so scroll-to-bottom stays synchronous with it.
+        const suggestionTextArea = suggestionTextAreaRef.current;
+        if (suggestionTextArea) {
+          suggestionTextArea.scrollTop = suggestionTextArea.scrollHeight;
+        }
       }
 
       setSuggestionIsLoading(false);
