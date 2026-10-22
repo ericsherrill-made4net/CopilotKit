@@ -1,4 +1,10 @@
-import React, { createContext, useId, useState } from "react";
+import React, {
+  createContext,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Check, ChevronRight, Loader2, X } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { partialJSONParse } from "@copilotkit/shared";
@@ -64,15 +70,22 @@ export function Collapsible({
   className?: string;
   children: React.ReactNode;
 }) {
+  // React only treats `inert` as a prop from 19 on, so set the attribute
+  // directly to keep closed content out of the tab order on React 18 too.
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.toggleAttribute("inert", !open);
+  }, [open]);
+
   return (
     <div
+      ref={ref}
       id={id}
       className={twMerge(
         "cpk:grid cpk:transition-[grid-template-rows] cpk:duration-300 cpk:ease-[cubic-bezier(0.16,1,0.3,1)] cpk:motion-reduce:transition-none",
         className,
       )}
       style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
-      inert={!open}
     >
       <div className="cpk:min-h-0 cpk:overflow-hidden">{children}</div>
     </div>

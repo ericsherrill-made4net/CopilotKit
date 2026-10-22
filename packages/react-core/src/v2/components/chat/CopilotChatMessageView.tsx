@@ -1100,14 +1100,15 @@ export function CopilotChatMessageView({
         />
       );
       // Reasoning during a reply's working phase folds away with the work.
-      const open = workOpen.get(message.id);
+      // Always wrapped in this display, so reasoning that turns into work
+      // keeps its node (and its "Thought for" timer) instead of remounting.
       elements.push(
-        open === undefined ? (
-          reasoning
-        ) : (
-          <Collapsible key={rowKey} open={open}>
+        toolCallDisplay === "turn" ? (
+          <Collapsible key={rowKey} open={workOpen.get(message.id) ?? true}>
             {reasoning}
           </Collapsible>
+        ) : (
+          reasoning
         ),
       );
     }

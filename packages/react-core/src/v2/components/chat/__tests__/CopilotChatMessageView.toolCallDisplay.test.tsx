@@ -207,4 +207,39 @@ describe("CopilotChatMessageView toolCallDisplay", () => {
     expect(summary.getAttribute("data-state")).toBe("working");
     expect(screen.queryByTestId("copilot-loading-cursor")).toBeNull();
   });
+
+  it("makes a closed group's rows inert", () => {
+    renderView(burst);
+    const group = screen.getByTestId("copilot-tool-call-group");
+    const body = group.querySelector("[id]")!;
+    expect(body.hasAttribute("inert")).toBe(true);
+    fireEvent.click(within(group).getAllByRole("button")[0]!);
+    expect(body.hasAttribute("inert")).toBe(false);
+  });
+
+  it("keeps a reasoning message mounted when a later call makes it work", () => {
+    const reasoning: Message = {
+      id: "r1",
+      role: "reasoning",
+      content: "Thinking about it.",
+    };
+    const { rerender } = renderView([question, reasoning], {
+      toolCallDisplay: "turn",
+      isRunning: true,
+    });
+    const node = screen.getByText("Thinking about it.");
+
+    rerender(
+      <CopilotKitProvider renderToolCalls={[weather, WildcardToolCallRender]}>
+        <CopilotChatConfigurationProvider threadId="tool-call-display">
+          <CopilotChatMessageView
+            messages={[question, reasoning, callMessage("a")]}
+            toolCallDisplay="turn"
+            isRunning
+          />
+        </CopilotChatConfigurationProvider>
+      </CopilotKitProvider>,
+    );
+    expect(screen.getByText("Thinking about it.")).toBe(node);
+  });
 });
